@@ -65,11 +65,29 @@ function rng(seed) {            // mulberry32
 }
 function save() { localStorage.setItem(STORE, JSON.stringify(state)); }
 function zoom(src) { document.getElementById("zoomimg").src = src; document.getElementById("zoom").style.display = "flex"; }
-function send(row) {
-  if (!ENDPOINT) return Promise.resolve();
-  return fetch(ENDPOINT, { method: "POST", mode: "no-cors", headers: { "Content-Type": "text/plain" }, body: JSON.stringify(row) });
+function row(it, i) {
+  return { time: it.at || new Date().toISOString(), participant: state.participant, form: state.form, index: i + 1,
+           question: it.id, scene: it.scene, left: it.left, right: it.right, choice: it.choice, ms: it.ms || 0 };
 }
-
+// Every answer is queued and re-sent until the POST goes through (network errors, blocked requests or a closed tab
+// leave it in the queue; it is retried on the next answer, on reload and on the final page).
+function post(r) {
+  const body = JSON.stringify(r);
+  return fetch(ENDPOINT, { method: "POST", mode: "no-cors", headers: { "Content-Type": "text/plain" }, body, keepalive: true })
+    .then(() => true, () => (navigator.sendBeacon ? navigator.sendBeacon(ENDPOINT, new Blob([body], { type: "text/plain" })) : false));
+}
+let flushing = false;
+async function flush() {
+  if (!ENDPOINT || !state || flushing) return; flushing = true;
+  state.pending = state.pending || [];
+  while (state.pending.length) {
+    const ok = await post(state.pending[0]);
+    if (!ok) break;
+    state.pending.shift(); state.sent = (state.sent || 0) + 1; save();
+  }
+  flushing = false; const el = document.getElementById("sync");
+  if (el) el.textContent = state.pending.length ? `전송 대기 ${state.pending.length}건 – 인터넷 연결을 확인해 주세요 / ${state.pending.length} answers not sent yet` : "";
+}
 function start() {
   const pid = document.getElementById("pid").value.trim();
   if (!pid) { alert("이름 또는 참가자 ID를 입력해 주세요. / Please enter your name or participant ID."); return; }
@@ -85,11 +103,10 @@ function start() {
 function choose(c) {
   const it = state.items[state.pos];
   const ms = Date.now() - (state.shownAt || Date.now());
-  it.choice = c; it.ms = (it.ms || 0) + ms;
-  send({ time: new Date().toISOString(), participant: state.participant, form: state.form, index: state.pos + 1,
-         question: it.id, scene: it.scene, left: it.left, right: it.right, choice: c, ms: it.ms });
+  it.choice = c; it.ms = (it.ms || 0) + ms; it.at = new Date().toISOString();
+  state.pending = state.pending || []; state.pending.push(row(it, state.pos));
   if (state.pos < state.items.length - 1) state.pos++; else state.done = true;
-  save(); render();
+  save(); render(); flush();
 }
 
 function render() {
@@ -116,7 +133,8 @@ function render() {
   }
   if (state.done) {
     app.innerHTML = `<div class="card"><h2>완료되었습니다. 감사합니다! / Thank you!</h2>
-      <p>응답이 모두 기록되었습니다. 이 창을 닫으셔도 됩니다.<br>All answers have been recorded. You may close this window.</p>
+      <p>응답을 기록하고 있습니다. 아래에 대기 건수가 남아 있지 않으면 창을 닫으셔도 됩니다.<br>Your answers are being recorded. You may close this window once nothing is pending below.</p>
+      <p id="sync" class="hint"></p>
       <p><button onclick="state.done=false;state.pos=state.items.length-1;save();render()">마지막 문항으로 돌아가기 / Back</button></p></div>`;
     return;
   }
@@ -135,7 +153,7 @@ function render() {
       <button class="R ${sel('right')}" onclick="choose('right')">[3] 오른쪽 / Right</button>
     </div>
     <div class="nav"><button ${state.pos === 0 ? "disabled" : ""} onclick="state.pos--;save();render()">← 이전 / Previous</button>
-      <span class="hint">문항 ${state.pos + 1} / ${n}</span><span></span></div>`;
+      <span class="hint">문항 ${state.pos + 1} / ${n}</span><span id="sync" class="hint"></span></div>`;
   const nxt = state.items[state.pos + 1];
   if (nxt) [nxt.input, nxt.left, nxt.right].forEach(f => { new Image().src = "img/" + f; });
 }
@@ -147,7 +165,9 @@ document.addEventListener("keydown", e => {
 });
 
 fetch("forms.json").then(r => r.json()).then(f => {
-  questions = f[FORM] || []; const s = localStorage.getItem(STORE); if (s) state = JSON.parse(s); render();
+  questions = f[FORM] || []; const s = localStorage.getItem(STORE); if (s) state = JSON.parse(s);
+  if (state && !state.requeued) { state.pending = state.items.map((it, i) => it.choice ? row(it, i) : null).filter(Boolean); state.requeued = true; save(); }
+  render(); flush();
 });
 </script>
 </body>
