@@ -27,7 +27,7 @@
   figure { margin:0; }
   figure img { width:100%; border:1px solid var(--line); border-radius:4px; cursor:zoom-in; display:block; background:var(--bg); }
   figcaption { text-align:center; font-size:14px; color:var(--muted); margin-top:6px; }
-  .choices { display:flex; justify-content:center; gap:12px; margin:18px 0 6px; }
+  .choices { display:flex; justify-content:center; gap:12px; margin:18px 0 6px calc((100% - 28px) / 3 + 14px); }
   .choices button { min-width:170px; }
   .choices button.sel { background:var(--accent); color:#fff; border-color:var(--accent); }
   .nav { display:flex; justify-content:space-between; margin-top:10px; }
@@ -35,7 +35,7 @@
   .err { color:#cf222e; }
   #zoom { position:fixed; inset:0; background:rgba(0,0,0,.85); display:none; align-items:center; justify-content:center; z-index:10; cursor:zoom-out; }
   #zoom img { max-width:96vw; max-height:94vh; }
-  @media (max-width:900px) { .row { grid-template-columns:1fr; } }
+  @media (max-width:900px) { .row { grid-template-columns:1fr; } .choices { margin-left:0; } }
 </style>
 </head>
 <body>
