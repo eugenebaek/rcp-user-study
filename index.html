@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Object Removal User Study</title>
+<style>
+  :root { --fg:#1f2328; --muted:#59636e; --line:#d1d9e0; --accent:#6f42c1; --bg:#f6f8fa; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans KR",sans-serif; color:var(--fg); background:#fff; }
+  header { position:sticky; top:0; background:#fff; border-bottom:1px solid var(--line); padding:10px 20px; display:flex; align-items:center; gap:16px; z-index:5; }
+  header h1 { font-size:16px; margin:0; font-weight:600; }
+  #progress { flex:1; height:8px; background:var(--bg); border-radius:4px; overflow:hidden; }
+  #bar { height:100%; width:0; background:var(--accent); transition:width .2s; }
+  #count { font-size:13px; color:var(--muted); min-width:70px; text-align:right; }
+  main { max-width:1500px; margin:0 auto; padding:20px; }
+  .card { max-width:720px; margin:40px auto; line-height:1.6; }
+  .card h2 { font-size:22px; }
+  .card ul { padding-left:20px; }
+  input[type=text] { font-size:16px; padding:8px 10px; width:100%; border:1px solid var(--line); border-radius:6px; }
+  button { font-size:15px; padding:10px 18px; border-radius:6px; border:1px solid var(--line); background:#fff; cursor:pointer; }
+  button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  button:disabled { opacity:.4; cursor:default; }
+  .question { text-align:center; font-size:20px; font-weight:600; margin:4px 0 14px; }
+  .question small { display:block; font-size:14px; font-weight:400; color:var(--muted); }
+  .row { display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px; align-items:start; }
+  figure { margin:0; }
+  figure img { width:100%; border:1px solid var(--line); border-radius:4px; cursor:zoom-in; display:block; background:var(--bg); }
+  figcaption { text-align:center; font-size:14px; color:var(--muted); margin-top:6px; }
+  .choices { display:flex; justify-content:center; gap:12px; margin:18px 0 6px; }
+  .choices button { min-width:170px; }
+  .choices button.sel { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .nav { display:flex; justify-content:space-between; margin-top:10px; }
+  .hint { text-align:center; font-size:13px; color:var(--muted); }
+  .err { color:#cf222e; }
+  #zoom { position:fixed; inset:0; background:rgba(0,0,0,.85); display:none; align-items:center; justify-content:center; z-index:10; cursor:zoom-out; }
+  #zoom img { max-width:96vw; max-height:94vh; }
+  @media (max-width:900px) { .row { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Object Removal User Study</h1>
+  <div id="progress"><div id="bar"></div></div>
+  <div id="count"></div>
+</header>
+<main id="app"></main>
+<div id="zoom" onclick="this.style.display='none'"><img id="zoomimg" alt=""></div>
+<script>
+// Google Apps Script web-app URL bound to the response sheet (see apps_script.gs). Every answer is appended as one row.
+const ENDPOINT = "https://script.google.com/macros/s/AKfycbwN86wtcWrOH2YXxl2WhaOaZFv7M8dThITd9s2azUtc5snkbMRHgx-kEQ9caUjHtA_FWQ/exec";
+const FORM = (new URLSearchParams(location.search).get("form") || "").toUpperCase();
+const STORE = "rcp_us_20261112_" + FORM;
+let questions = [], state = null;
+
+function rng(seed) {            // mulberry32
+  let a = 0; for (const c of seed) a = (a * 31 + c.charCodeAt(0)) >>> 0;
+  return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+}
+function save() { localStorage.setItem(STORE, JSON.stringify(state)); }
+function zoom(src) { document.getElementById("zoomimg").src = src; document.getElementById("zoom").style.display = "flex"; }
+function send(row) {
+  if (!ENDPOINT) return Promise.resolve();
+  return fetch(ENDPOINT, { method: "POST", mode: "no-cors", headers: { "Content-Type": "text/plain" }, body: JSON.stringify(row) });
+}
+
+function start() {
+  const pid = document.getElementById("pid").value.trim();
+  if (!pid) { alert("이름 또는 참가자 ID를 입력해 주세요. / Please enter your name or participant ID."); return; }
+  const r = rng(FORM + "|" + pid);
+  const order = questions.map((q, i) => i);
+  for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
+  const items = order.map(i => { const q = questions[i]; const swap = r() < 0.5;
+    return { id: q.id, scene: q.scene, input: q.input, left: swap ? q.b : q.a, right: swap ? q.a : q.b, choice: null }; });
+  state = { participant: pid, form: FORM, started: new Date().toISOString(), pos: 0, items };
+  save(); render();
+}
+
+function choose(c) {
+  const it = state.items[state.pos];
+  const ms = Date.now() - (state.shownAt || Date.now());
+  it.choice = c; it.ms = (it.ms || 0) + ms;
+  send({ time: new Date().toISOString(), participant: state.participant, form: state.form, index: state.pos + 1,
+         question: it.id, scene: it.scene, left: it.left, right: it.right, choice: c, ms: it.ms });
+  if (state.pos < state.items.length - 1) state.pos++; else state.done = true;
+  save(); render();
+}
+
+function render() {
+  const app = document.getElementById("app");
+  if (!questions.length) {
+    app.innerHTML = `<div class="card"><h2 class="err">설문 링크가 올바르지 않습니다.</h2><p>받은 링크를 그대로 열어 주세요. / Please open the exact link you received.</p></div>`; return;
+  }
+  const n = questions.length, answered = state ? state.items.filter(x => x.choice).length : 0;
+  document.getElementById("bar").style.width = (100 * answered / n) + "%";
+  document.getElementById("count").textContent = state ? `${answered} / ${n}` : "";
+  if (!state) {
+    app.innerHTML = `<div class="card">
+      <h2>안내 / Instructions</h2>
+      <p>각 문항에는 입력 이미지와, 보라색으로 표시된 물체를 지운 두 결과가 나옵니다.
+         두 결과 중 <b>전체적인 품질(overall quality)</b>이 더 좋은 쪽을 고르고, 차이를 판단하기 어려우면 <b>비슷함</b>을 고르세요.</p>
+      <p>Each question shows an input image and two results in which the object marked in purple has been removed.
+         Choose the result with better <b>overall quality</b>, or <b>Tie</b> if you cannot tell them apart.</p>
+      <ul><li>총 ${n}문항, 약 5–10분 / ${n} questions, about 5–10 minutes.</li>
+          <li>이미지를 클릭하면 크게 볼 수 있습니다. 키보드 1 / 2 / 3으로도 답할 수 있습니다.<br>Click an image to enlarge it. Keys 1 / 2 / 3 also answer.</li>
+          <li>답은 바로 저장되며, 창을 닫아도 같은 브라우저에서 이어서 할 수 있습니다.<br>Answers are saved immediately; you can resume in the same browser.</li></ul>
+      <p><label>이름 또는 참가자 ID / Name or participant ID<br><input type="text" id="pid"></label></p>
+      <button class="primary" onclick="start()">시작 / Start</button></div>`;
+    return;
+  }
+  if (state.done) {
+    app.innerHTML = `<div class="card"><h2>완료되었습니다. 감사합니다! / Thank you!</h2>
+      <p>응답이 모두 기록되었습니다. 이 창을 닫으셔도 됩니다.<br>All answers have been recorded. You may close this window.</p>
+      <p><button onclick="state.done=false;state.pos=state.items.length-1;save();render()">마지막 문항으로 돌아가기 / Back</button></p></div>`;
+    return;
+  }
+  const it = state.items[state.pos]; state.shownAt = Date.now();
+  const sel = c => it.choice === c ? "sel" : "";
+  app.innerHTML = `
+    <div class="question">Overall quality가 더 좋은 결과는?<small>Which result has better overall quality?</small></div>
+    <div class="row">
+      <figure><img src="img/${it.input}" onclick="zoom(this.src)" alt="input"><figcaption>입력 (보라색 = 지울 물체) / Input</figcaption></figure>
+      <figure><img src="img/${it.left}" onclick="zoom(this.src)" alt="left"><figcaption>왼쪽 결과 / Left</figcaption></figure>
+      <figure><img src="img/${it.right}" onclick="zoom(this.src)" alt="right"><figcaption>오른쪽 결과 / Right</figcaption></figure>
+    </div>
+    <div class="choices">
+      <button class="${sel('left')}" onclick="choose('left')">[1] 왼쪽 / Left</button>
+      <button class="${sel('tie')}" onclick="choose('tie')">[2] 비슷함 / Tie</button>
+      <button class="${sel('right')}" onclick="choose('right')">[3] 오른쪽 / Right</button>
+    </div>
+    <div class="nav"><button ${state.pos === 0 ? "disabled" : ""} onclick="state.pos--;save();render()">← 이전 / Previous</button>
+      <span class="hint">문항 ${state.pos + 1} / ${n}</span><span></span></div>`;
+  const nxt = state.items[state.pos + 1];
+  if (nxt) [nxt.input, nxt.left, nxt.right].forEach(f => { new Image().src = "img/" + f; });
+}
+
+document.addEventListener("keydown", e => {
+  if (!state || state.done || document.activeElement.tagName === "INPUT") return;
+  if (e.key === "1") choose("left"); else if (e.key === "2") choose("tie"); else if (e.key === "3") choose("right");
+  else if (e.key === "Escape") document.getElementById("zoom").style.display = "none";
+});
+
+fetch("forms.json").then(r => r.json()).then(f => {
+  questions = f[FORM] || []; const s = localStorage.getItem(STORE); if (s) state = JSON.parse(s); render();
+});
+</script>
+</body>
+</html>
