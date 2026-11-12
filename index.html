@@ -28,8 +28,13 @@
   figure img { width:100%; border:1px solid var(--line); border-radius:4px; cursor:zoom-in; display:block; background:var(--bg); }
   figcaption { text-align:center; font-size:14px; color:var(--muted); margin-top:6px; }
   .choices { display:flex; justify-content:center; gap:12px; margin:18px 0 6px calc((100% - 28px) / 3 + 14px); }
-  .choices button { min-width:170px; }
-  .choices button.sel { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .choices button { min-width:170px; font-weight:600; border-width:2px; }
+  .choices button.sel { background:#59636e; color:#fff; border-color:#59636e; }
+  .L { --c:#0969da; } .R { --c:#d1242f; }
+  figure.L img, figure.R img { border:3px solid var(--c); }
+  figure.L figcaption, figure.R figcaption { color:var(--c); font-weight:700; font-size:15px; }
+  .choices button.L, .choices button.R { color:var(--c); border-color:var(--c); }
+  .choices button.L.sel, .choices button.R.sel { background:var(--c); color:#fff; }
   .nav { display:flex; justify-content:space-between; margin-top:10px; }
   .hint { text-align:center; font-size:13px; color:var(--muted); }
   .err { color:#cf222e; }
@@ -121,13 +126,13 @@ function render() {
     <div class="question">Overall quality가 더 좋은 결과는?<small>Which result has better overall quality?</small></div>
     <div class="row">
       <figure><img src="img/${it.input}" onclick="zoom(this.src)" alt="input"><figcaption>입력 (보라색 = 지울 물체) / Input</figcaption></figure>
-      <figure><img src="img/${it.left}" onclick="zoom(this.src)" alt="left"><figcaption>왼쪽 결과 / Left</figcaption></figure>
-      <figure><img src="img/${it.right}" onclick="zoom(this.src)" alt="right"><figcaption>오른쪽 결과 / Right</figcaption></figure>
+      <figure class="L"><img src="img/${it.left}" onclick="zoom(this.src)" alt="left"><figcaption>왼쪽 결과 / Left</figcaption></figure>
+      <figure class="R"><img src="img/${it.right}" onclick="zoom(this.src)" alt="right"><figcaption>오른쪽 결과 / Right</figcaption></figure>
     </div>
     <div class="choices">
-      <button class="${sel('left')}" onclick="choose('left')">[1] 왼쪽 / Left</button>
+      <button class="L ${sel('left')}" onclick="choose('left')">[1] 왼쪽 / Left</button>
       <button class="${sel('tie')}" onclick="choose('tie')">[2] 비슷함 / Tie</button>
-      <button class="${sel('right')}" onclick="choose('right')">[3] 오른쪽 / Right</button>
+      <button class="R ${sel('right')}" onclick="choose('right')">[3] 오른쪽 / Right</button>
     </div>
     <div class="nav"><button ${state.pos === 0 ? "disabled" : ""} onclick="state.pos--;save();render()">← 이전 / Previous</button>
       <span class="hint">문항 ${state.pos + 1} / ${n}</span><span></span></div>`;
