@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Object Removal User Study</title>
+<style>
+  :root { --fg:#1f2328; --muted:#59636e; --line:#d1d9e0; --accent:#6f42c1; --bg:#f6f8fa; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans KR",sans-serif; color:var(--fg); background:#fff; }
+  header { position:sticky; top:0; background:#fff; border-bottom:1px solid var(--line); padding:10px 20px; display:flex; align-items:center; gap:16px; z-index:5; }
+  header h1 { font-size:16px; margin:0; font-weight:600; }
+  #progress { flex:1; height:8px; background:var(--bg); border-radius:4px; overflow:hidden; }
+  #bar { height:100%; width:0; background:var(--accent); transition:width .2s; }
+  #count { font-size:13px; color:var(--muted); min-width:70px; text-align:right; }
+  main { max-width:1500px; margin:0 auto; padding:20px; }
+  .card { max-width:720px; margin:40px auto; line-height:1.6; }
+  .card h2 { font-size:22px; }
+  .card ul { padding-left:20px; }
+  input[type=text] { font-size:16px; padding:8px 10px; width:100%; border:1px solid var(--line); border-radius:6px; }
+  button { font-size:15px; padding:10px 18px; border-radius:6px; border:1px solid var(--line); background:#fff; cursor:pointer; }
+  button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  button:disabled { opacity:.4; cursor:default; }
+  .question { text-align:center; font-size:20px; font-weight:600; margin:4px 0 14px; }
+  .question small { display:block; font-size:14px; font-weight:400; color:var(--muted); }
+  .row { display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px; align-items:start; }
+  figure { margin:0; }
+  figure img { width:100%; border:1px solid var(--line); border-radius:4px; cursor:zoom-in; display:block; background:var(--bg); }
+  figcaption { text-align:center; font-size:14px; color:var(--muted); margin-top:6px; }
+  .choices { display:flex; justify-content:center; gap:12px; margin:18px 0 6px calc((100% - 28px) / 3 + 14px); }
+  .choices button { min-width:170px; font-weight:600; border-width:2px; }
+  .choices button.sel { background:#59636e; color:#fff; border-color:#59636e; }
+  .L { --c:#0969da; } .R { --c:#d1242f; }
+  figure.L img, figure.R img { border:3px solid var(--c); }
+  figure.L figcaption, figure.R figcaption { color:var(--c); font-weight:700; font-size:15px; }
+  .choices button.L, .choices button.R { color:var(--c); border-color:var(--c); }
+  .choices button.L.sel, .choices button.R.sel { background:var(--c); color:#fff; }
+  .nav { display:flex; justify-content:space-between; margin-top:10px; }
+  .hint { text-align:center; font-size:13px; color:var(--muted); }
+  .err { color:#cf222e; }
+  #zoom { position:fixed; inset:0; background:rgba(0,0,0,.85); display:none; align-items:center; justify-content:center; z-index:10; cursor:zoom-out; }
+  #zoom img { max-width:96vw; max-height:94vh; }
+  @media (max-width:900px) { .row { grid-template-columns:1fr; } .choices { margin-left:0; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Object Removal User Study</h1>
+  <div id="progress"><div id="bar"></div></div>
+  <div id="count"></div>
+</header>
+<main id="app"></main>
+<div id="zoom" onclick="this.style.display='none'"><img id="zoomimg" alt=""></div>
+<script>
+// Google Apps Script web-app URL bound to the response sheet (see apps_script.gs). Every answer is appended as one row.
+const ENDPOINT = "";   // English copy for figures: answers are not recorded
+const FORM = (new URLSearchParams(location.search).get("form") || "").toUpperCase();
+const STORE = "rcp_us_en_" + FORM;
+let questions = [], state = null;
+
+function rng(seed) {            // mulberry32
+  let a = 0; for (const c of seed) a = (a * 31 + c.charCodeAt(0)) >>> 0;
+  return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+}
+function save() { localStorage.setItem(STORE, JSON.stringify(state)); }
+function zoom(src) { document.getElementById("zoomimg").src = src; document.getElementById("zoom").style.display = "flex"; }
+function row(it, i) {
+  return { time: it.at || new Date().toISOString(), participant: state.participant, form: state.form, index: i + 1,
+           question: it.id, scene: it.scene, left: it.left, right: it.right, choice: it.choice, ms: it.ms || 0 };
+}
+// Every answer is queued and re-sent until the POST goes through (network errors, blocked requests or a closed tab
+// leave it in the queue; it is retried on the next answer, on reload and on the final page).
+function post(r) {
+  const body = JSON.stringify(r);
+  return fetch(ENDPOINT, { method: "POST", mode: "no-cors", headers: { "Content-Type": "text/plain" }, body, keepalive: true })
+    .then(() => true, () => (navigator.sendBeacon ? navigator.sendBeacon(ENDPOINT, new Blob([body], { type: "text/plain" })) : false));
+}
+let flushing = false;
+async function flush() {
+  if (!ENDPOINT || !state || flushing) return; flushing = true;
+  state.pending = state.pending || [];
+  while (state.pending.length) {
+    const ok = await post(state.pending[0]);
+    if (!ok) break;
+    state.pending.shift(); state.sent = (state.sent || 0) + 1; save();
+  }
+  flushing = false; const el = document.getElementById("sync");
+  if (el) el.textContent = state.pending.length ? `${state.pending.length} answers not sent yet. Please check your connection.` : "";
+}
+function start() {
+  const pid = document.getElementById("pid").value.trim();
+  if (!pid) { alert("Please enter your participant ID."); return; }
+  const r = rng(FORM + "|" + pid);
+  const order = questions.map((q, i) => i);
+  for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
+  const items = order.map(i => { const q = questions[i]; const swap = r() < 0.5;
+    return { id: q.id, scene: q.scene, input: q.input, left: swap ? q.b : q.a, right: swap ? q.a : q.b, choice: null }; });
+  state = { participant: pid, form: FORM, started: new Date().toISOString(), pos: 0, items };
+  save(); render();
+}
+
+function choose(c) {
+  const it = state.items[state.pos];
+  const ms = Date.now() - (state.shownAt || Date.now());
+  it.choice = c; it.ms = (it.ms || 0) + ms; it.at = new Date().toISOString();
+  state.pending = state.pending || []; state.pending.push(row(it, state.pos));
+  if (state.pos < state.items.length - 1) state.pos++; else state.done = true;
+  save(); render(); flush();
+}
+
+function render() {
+  const app = document.getElementById("app");
+  if (!questions.length) {
+    app.innerHTML = `<div class="card"><h2 class="err">Invalid survey link.</h2><p>Please open the exact link you received.</p></div>`; return;
+  }
+  const n = questions.length, answered = state ? state.items.filter(x => x.choice).length : 0;
+  document.getElementById("bar").style.width = (100 * answered / n) + "%";
+  document.getElementById("count").textContent = state ? `${answered} / ${n}` : "";
+  if (!state) {
+    app.innerHTML = `<div class="card">
+      <h2>Instructions</h2>
+      <p>Each question shows an input image and two results in which the object marked in purple has been removed.
+         Choose the result with better <b>overall quality</b>, or <b>Tie</b> if you cannot tell them apart.</p>
+      <ul><li>${n} questions, about 5–10 minutes.</li>
+          <li>Click an image to enlarge it. Keys 1 / 2 / 3 also answer.</li>
+          <li>Answers are saved immediately; you can resume in the same browser.</li></ul>
+      <p><label>Participant ID<br><input type="text" id="pid"></label></p>
+      <button class="primary" onclick="start()">Start</button></div>`;
+    return;
+  }
+  if (state.done) {
+    app.innerHTML = `<div class="card"><h2>Thank you!</h2>
+      <p>Your answers are being recorded. You may close this window once nothing is pending below.</p>
+      <p id="sync" class="hint"></p>
+      <p><button onclick="state.done=false;state.pos=state.items.length-1;save();render()">Back to the last question</button></p></div>`;
+    return;
+  }
+  const it = state.items[state.pos]; state.shownAt = Date.now();
+  const sel = c => it.choice === c ? "sel" : "";
+  app.innerHTML = `
+    <div class="question">Which result has better overall quality?</div>
+    <div class="row">
+      <figure><img src="img/${it.input}" onclick="zoom(this.src)" alt="input"><figcaption>Input (purple: object to remove)</figcaption></figure>
+      <figure class="L"><img src="img/${it.left}" onclick="zoom(this.src)" alt="left"><figcaption>Left result</figcaption></figure>
+      <figure class="R"><img src="img/${it.right}" onclick="zoom(this.src)" alt="right"><figcaption>Right result</figcaption></figure>
+    </div>
+    <div class="choices">
+      <button class="L ${sel('left')}" onclick="choose('left')">[1] Left</button>
+      <button class="${sel('tie')}" onclick="choose('tie')">[2] Tie</button>
+      <button class="R ${sel('right')}" onclick="choose('right')">[3] Right</button>
+    </div>
+    <div class="nav"><button ${state.pos === 0 ? "disabled" : ""} onclick="state.pos--;save();render()">← Previous</button>
+      <span class="hint">Question ${state.pos + 1} / ${n}</span><span id="sync" class="hint"></span></div>`;
+  const nxt = state.items[state.pos + 1];
+  if (nxt) [nxt.input, nxt.left, nxt.right].forEach(f => { new Image().src = "img/" + f; });
+}
+
+document.addEventListener("keydown", e => {
+  if (!state || state.done || document.activeElement.tagName === "INPUT") return;
+  if (e.key === "1") choose("left"); else if (e.key === "2") choose("tie"); else if (e.key === "3") choose("right");
+  else if (e.key === "Escape") document.getElementById("zoom").style.display = "none";
+});
+
+fetch("forms.json").then(r => r.json()).then(f => {
+  questions = f[FORM] || []; const s = localStorage.getItem(STORE); if (s) state = JSON.parse(s);
+  if (state && !state.requeued) { state.pending = state.items.map((it, i) => it.choice ? row(it, i) : null).filter(Boolean); state.requeued = true; save(); }
+  render(); flush();
+});
+</script>
+</body>
+</html>
